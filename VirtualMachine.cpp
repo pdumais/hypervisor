@@ -12,11 +12,12 @@
 #include <stdlib.h>
 #include <thread>
 
-VirtualMachine::VirtualMachine(int kvm, unsigned long memsize)
+VirtualMachine::VirtualMachine(int kvm, unsigned long memsize, int cpu_count)
 {
     int ret;
     this->kvm_fd = kvm;
-
+    for (int i = 0; i < MAX_CPU; i++) this->cpu_fd[i] = 0;
+    this->cpu_count = cpu_count;
 
     this->vm_fd = ioctl(this->kvm_fd, KVM_CREATE_VM, 0);
 
@@ -74,14 +75,13 @@ VirtualMachine::~VirtualMachine()
     //TODO: destroy ram buffer
     delete this->bus;
     delete this->mem;
-    close(this->cpu_fd);
+    for (int i = 0; i < this->cpu_count; i++) close(this->cpu_fd[i]);
     close(this->vm_fd);
 }
 
 void VirtualMachine::initCPU()
 {
     int ret;
-    this->cpu_fd = ioctl(this->vm_fd, KVM_CREATE_VCPU, 0);
     
     struct kvm_cpuid2 *cpuid;
     int nent = 100;
@@ -91,30 +91,34 @@ void VirtualMachine::initCPU()
     cpuid->nent = nent;
     ret = ioctl(this->kvm_fd, KVM_GET_SUPPORTED_CPUID, cpuid);
 
-    ioctl(this->cpu_fd, KVM_SET_CPUID2, cpuid);
+    for (int i = 0; i < this->cpu_count; i++)
+    {
+        this->cpu_fd[i] = ioctl(this->vm_fd, KVM_CREATE_VCPU, i);
+        ioctl(this->cpu_fd[i], KVM_SET_CPUID2, cpuid);
+
+        // init registers
+        struct kvm_sregs sregs;
+        struct kvm_regs regs;
+
+        ioctl(this->cpu_fd[i], KVM_GET_SREGS, &sregs);
+        sregs.cs.selector = 0;
+        sregs.cs.base = 0;
+        sregs.ss.selector = 0;
+        sregs.ss.base = 0;
+        sregs.ds.selector = 0;
+        sregs.ds.base = 0;
+        sregs.es.selector = 0;
+        sregs.es.base = 0;
+        sregs.fs.selector = 0;
+        sregs.fs.base = 0;
+        sregs.gs.selector = 0;
+
+        regs.rflags = 0b10;
+        regs.rip = 0;  // Instruction pointer will initially point to 0, so code must be placed there
+        ioctl(this->cpu_fd[i], KVM_SET_REGS, &regs);
+        ioctl(this->cpu_fd[i], KVM_SET_SREGS, &sregs);
+    }
     free(cpuid);
-
-    // init registers
-    struct kvm_sregs sregs;
-    struct kvm_regs regs;
-
-    ioctl(this->cpu_fd, KVM_GET_SREGS, &sregs);
-    sregs.cs.selector = 0;
-    sregs.cs.base = 0;
-    sregs.ss.selector = 0;
-    sregs.ss.base = 0;
-    sregs.ds.selector = 0;
-    sregs.ds.base = 0;
-    sregs.es.selector = 0;
-    sregs.es.base = 0;
-    sregs.fs.selector = 0;
-    sregs.fs.base = 0;
-    sregs.gs.selector = 0;
-
-    regs.rflags = 0b10;
-    regs.rip = 0;  // Instruction pointer will initially point to 0, so code must be placed there
-    ioctl(this->cpu_fd, KVM_SET_REGS, &regs);
-    ioctl(this->cpu_fd, KVM_SET_SREGS, &sregs);
 }
 
 void VirtualMachine::loadBinary(const std::string& fname, unsigned long address)
@@ -196,12 +200,33 @@ int VirtualMachine::registerFdForGSI(int gsi, int efd)
 
 void VirtualMachine::run()
 {
+    std::thread th[this->cpu_count];
+    //this->cpu_count = 1;
+    this->stop = false;
+    for (int i = 0; i < this->cpu_count; i++)
+    {
+        th[i] = std::thread([=]() {
+            this->runCpu(i);
+        });
+    }
+
+    for (int i = 0; i < this->cpu_count; i++)
+    {
+        th[i].join();
+    }
+
+}
+void VirtualMachine::runCpu(int cpuIndex)
+{
+    int cpu = this->cpu_fd[cpuIndex];
+    this->dumpRegisters(cpu);
+
     int mmap_size = ioctl(this->kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
-    struct kvm_run *run = (struct kvm_run *)mmap(0, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, this->cpu_fd, 0);
+    printf("mmap_size = %i\n", mmap_size);
+    struct kvm_run *run = (struct kvm_run *)mmap(0, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, cpu, 0);
+    printf("kvm_run = 0x%08x, errno=%i, cpu_fd=%i\n", run, errno, cpu);
     unsigned char seq = 0;
 
-    this->stop = false;
-    this->dumpRegisters(this->cpu_fd);
     while (!this->stop)
     {
         // The main loop runs the VM and blocks until a vmexit occurs. The IOCTL to KVM_RUN is basically the 'VMRESUME' instruction
@@ -209,13 +234,13 @@ void VirtualMachine::run()
         // Needless to say that each vmexit is expensive so we want to avoid it as much as possible. We don't really have
         // control over that since it's the guest that causes those exits, but it is the hypervisor that sets the condictions to exit
         // about mmio for example.
-        ioctl(this->cpu_fd, KVM_RUN, 0);
+        ioctl(cpu, KVM_RUN, 0);
         int reason = run->exit_reason;
         switch (reason) {
             case KVM_EXIT_MMIO:
                 {
                     printf("*** KVM_EXIT_MMIO %016llx %08x %i\n", run->mmio.phys_addr, run->mmio.len, run->mmio.is_write);
-                    this->dumpRegisters(this->cpu_fd);
+                    this->dumpRegisters(cpu);
                 }
                 break;
             case KVM_EXIT_X86_WRMSR:
@@ -226,7 +251,7 @@ void VirtualMachine::run()
             case KVM_EXIT_SHUTDOWN:
                 {
                     printf("*** KVM_EXIT_SHUTDOWN (Triple fault) %i %i %08x %016llx\n", run->msr.error, run->msr.reason, run->msr.index, run->msr.data);
-                    this->dumpRegisters(this->cpu_fd);
+                    this->dumpRegisters(cpu);
                     this->stop = true;
                     continue;
                 }
@@ -243,14 +268,23 @@ void VirtualMachine::run()
                     char* data = (((char *)run) + run->io.data_offset);
             	    if (run->io.direction == KVM_EXIT_IO_IN) 
                     {
-                        DeviceBase *dev = this->bus->getDeviceByPort(run->io.port);
-                        if (dev)
+                        if (run->io.port == 0xFFFE)
                         {
-                            ((unsigned int*)data)[0] = dev->handlePortRead();
+                            // this is a special input to get the index of the current CPU.
+                            // On a real machine, this is done by reading from the LAPIC
+                            ((unsigned int*)data)[0] = cpuIndex;
                         }
                         else
                         {
-                            printf("io in %04x = %04x\n", run->io.port, ((unsigned int*)data)[0]);
+                            DeviceBase *dev = this->bus->getDeviceByPort(run->io.port);
+                            if (dev)
+                            {
+                                ((unsigned int*)data)[0] = dev->handlePortRead();
+                            }
+                            else
+                            {
+                                printf("io in %04x = %04x\n", run->io.port, ((unsigned int*)data)[0]);
+                            }
                         }
 
                     } 
@@ -258,7 +292,7 @@ void VirtualMachine::run()
                     {
                         if (run->io.port == 0xFFFF)
                         {
-                            this->handleHypercall(((unsigned int*)data)[0]);
+                            this->handleHypercall(((unsigned int*)data)[0], cpu);
                         }
                         else 
                         {
@@ -269,29 +303,34 @@ void VirtualMachine::run()
                             }
                             else
                             {
-                                this->dumpRegisters(this->cpu_fd);
+                                this->dumpRegisters(cpu);
                                 printf("io out %04x = %04x\n", run->io.port, ((unsigned int*)data)[0]);
                             }
                         }
                     }
                 }
 	            break;
+            case KVM_EXIT_UNKNOWN:
+                {
+                    printf("** VM EXIT Unknown reason\n");
+                    this->dumpRegisters(cpu);
+                }
+                break;
             default:
                 {
                     printf("** Unhandled VM EXIT %i\n", reason);
-                    this->dumpRegisters(this->cpu_fd);
+                    this->dumpRegisters(cpu);
                     this->stop = true;
                     continue;
                 }
-
-	    }
+	    } 
     }
-
+    printf("CPU %i exited\n", cpu);
 }
 
-void VirtualMachine::handleHypercall(unsigned int cmd)
+void VirtualMachine::handleHypercall(unsigned int cmd, int cpu)
 {
-    printf("*** Hypercall: cmd=%08x\n", cmd);
+    printf("*** Hypercall(%i): cmd=%08x\n", cpu, cmd);
     sleep(1);
 }
 

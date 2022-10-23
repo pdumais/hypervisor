@@ -6,7 +6,7 @@
 .global ioAPICRedirect
 .global registerInterruptGate
 .global registerIRQ
-
+.global startAllCPUs
 
 #define APIC_BASE_MSR                       0x1B
 #define APIC_REG_ID                         0x0020
@@ -402,6 +402,36 @@ exceptionDHandler:
         push    %rax
     mov     $0x0D,%rax
     jmp     crashDump
+
+startAllCPUs:
+    push    %rdi
+    push    %rax
+    push    %rcx
+    push    %rbx
+    push    %rdx
+
+    mov     apic_base,%rdi
+    mov     $0xC4500, %rax   // broadcast INIT to all APs
+    mov     %eax, APIC_REG_INTERRUPTCOMMANDLOW(%rdi)
+
+    mov     $0xC4600, %rax   // broadcast SIPI to all APs
+    mov     $0,%rcx // The APs will start at address 0, just like the BST
+    shr     $12,%rcx
+    and     $0xFF,%rcx
+    or      %rcx,%rax
+    mov     $1000, %rcx
+1:  mov     %eax, APIC_REG_INTERRUPTCOMMANDLOW(%rdi)
+    dec     %rcx
+    jnz     1b
+
+    pop     %rdx
+    pop     %rbx
+    pop     %rcx
+    pop     %rax
+    pop     %rdi
+    ret
+
+
 
 setup_lapic:
     push    %rdi

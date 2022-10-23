@@ -32,11 +32,12 @@ void Reactor::addWorker(Worker* w)
 
 void Reactor::start()
 {
-    th = new std::thread([=](){
+    this->th = new std::thread([=](){
         this->stopFlag = false;
         while (!stopFlag){
             struct epoll_event events[this->numfd];
             int nfds = epoll_wait(epollfd, events, this->numfd, EPOLL_WAIT_MS);
+            if (stopFlag) break;
             for (int i = 0; i < nfds; i++)
             {
                 int fd = events[i].data.fd;
@@ -55,11 +56,12 @@ void Reactor::start()
                 w->work();
             }
         }
+        printf("worker thread exiting\n");
     });
 }
 
 void Reactor::stop()
 {
     this->stopFlag = true;
-    th->join();
+    this->th->join();
 }

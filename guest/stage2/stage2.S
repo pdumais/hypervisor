@@ -2,20 +2,49 @@
 
 .global setup_lapic
 .global setup_idt
+.global load_idt
 
 .global outport
 .global inport
 .global halt
 .global hypercall
-
+.extern startAllCPUs
 .extern main
 
 .globl _start
 .code64
 .align 16
 _start:
+    mov     $0xFFFE,%rdx // get cpu index
+    xor     %rax,%rax
+    in      %dx,%eax
+    cmp     $0,%rax
+    jnz     1f
     call    setup_idt
+1:
+    call    load_idt
     call    setup_lapic
+
+    // As a proof of concept, we'll just leave all APs spinning here
+    mov     $0xFFFE,%rdx // get cpu index
+    xor     %rax,%rax
+    in      %dx,%eax
+    1:
+    mov     $0xFFFF,%rdx
+    out     %eax, %dx
+    cmp     $0,%rax
+    jnz 1b
+
+    call    startAllCPUs
+
+///////////////////////////////////////////////////////
+//1:
+//    mov     $0xFFFF,%dx
+//    out     %eax, %dx
+//    jmp 1b
+///////////////////////////////////////////////////////
+
+
 
 
     sti

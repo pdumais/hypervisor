@@ -23,8 +23,6 @@
 TODO
 printf should output to video console
 
-support multiple CPUs
-
 vfio? KVM_CREATE_DEVICE with KVM_DEV_TYPE_VFIO ?
     ->https://www.kernel.org/doc/html/v5.17/virt/kvm/devices/vfio.html
 
@@ -56,7 +54,7 @@ int main(int argc, char** argv)
     int kvm = open("/dev/kvm", O_RDWR | O_CLOEXEC);//open("/dev/kvm", O_RDWR);
 
     printf("Creating VM\n");
-    VirtualMachine *vm = new VirtualMachine(kvm, 1024*1024*128);
+    VirtualMachine *vm = new VirtualMachine(kvm, 1024*1024*128, 4);
 
     printf("Loading stage1\n");
     vm->loadBinary("guest/stage1/stage1.bin", 0);
@@ -82,6 +80,7 @@ int main(int argc, char** argv)
     printf("Running\n");
     vm->run();
 
+    printf("Terminating\n");
     reactor.stop();
 
     close(kvm);

@@ -44,8 +44,18 @@ What you don't have to do:
     - Dealing with the A20 line
     - Dealing with reserved memory for BIOS
 
+
+# Support multiple CPUs
+The nice thing about KVM is that it also handles the CPU bootstraping in a SMP setup.
+So when creating a multi-CPU VM, you can simply run KVM_RUN on all vcpu and KVM will
+automatically stall the AP vcpus until the BST sends the INIT IPI.
+
+The hypervisor creates 1 thread per vcpu and calls KVM_RUN (VMRESUME) in a loop.
+
+
 # Guest machine
 The guest code is very messy. That's because I didn't wanna bother rewriting another OS, I've those this already in the past (https://github.com/pdumais/OperatingSystem)
+
 
 # Final Thought
 I've written an OS in the past, as mentioned above. It was fun to learn about how PCI works, how to write virtio drivers, how to deal with the BIOS, writting a bootloader, etc. But I think it would've been nice if all of that had been simplified since this is not where I wanted to spend my limited time on. So I think that a "simple machine emulator" has its place in the world. 

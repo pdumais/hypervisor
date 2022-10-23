@@ -18,10 +18,28 @@ _start:
 
 .org 8
     cli
+
+//TODO: get the CPU ID and hypercall-loop if not cpu 0.
+// this will prove that the CPUs all get started
+// and we know it's because of the INIT broadcast
+// because we dont see them loading up if we dont braodcast it
+/*1:  
+    mov     $0xFFFF,%dx
+    out     %eax, %dx
+    cmp     $0,%eax
+    jnz     1b*/
+
+
+    mov     $0xFFFE,%dx // get cpu index
+    in      %dx,%eax
+    shl     $8,%eax
+
     // Setup stack
-    mov     $0,%ax
-    mov     %ax, %ss
-    mov     $STACK_END,%sp                                                            
+    mov     $0,%bx
+    mov     %bx, %ss
+    mov     $STACK_END,%bx
+    add     %bx,%ax
+    mov     %ax,%sp
     mov     %sp,%bp
 
     // Switch to 32bit protected mode
@@ -37,7 +55,16 @@ _start:
 .code32
 .align 16
 .ORG 0x200
-    mov    $STACK_END,%esp                                                            
+
+    mov     $0xFFFE,%dx // get cpu index
+    in      %dx,%eax
+    shl     $10,%eax
+
+    // Setup stack
+    mov     $STACK_END,%ebx
+    add     %ebx,%eax
+    mov     %eax,%esp
+    mov     %esp,%ebp
     mov    $8,  %ax
     mov    %ax, %ds
     mov    %ax, %es
@@ -50,7 +77,12 @@ _start:
     //out %ax, $111
     //mov $8,%ecx
 
+    mov     $0xFFFE,%dx // get cpu index
+    in      %dx,%eax
+    cmp     $0, %eax    
+    jnz     isAP
     call    setupPageStructure
+isAP:
     call    enableLongMode
     ljmpl   $0x18,$longmode
 
@@ -145,7 +177,16 @@ enableLongMode:
 .code64
 .align 16
 longmode:
-    mov    $STACK_END,%rsp
+    // Setup stack
+    mov     $0xFFFE,%dx // get cpu index
+    xor     %rax,%rax
+    in      %dx,%eax
+    shl     $10,%rax
+    mov     $STACK_END,%rbx
+    add     %rbx,%rax
+    mov     %rax,%rsp
+    mov     %rsp,%rbp
+
     jmp    0x100000 // Jump to stage 2
 1: hlt
     jmp 1b
