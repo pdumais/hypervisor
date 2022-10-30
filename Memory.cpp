@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "log.h"
 
 
 Memory::Memory(int vm_fd) 
@@ -23,7 +24,7 @@ void* Memory::createRegion(unsigned long size, uintptr_t addr)
     void *buf = mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (buf == MAP_FAILED)
     {
-        printf("mmap failed\n");
+        log("mmap failed\n");
         return 0;
     }
     this->createRegion(buf, size, addr);
@@ -33,13 +34,14 @@ void* Memory::createRegion(unsigned long size, uintptr_t addr)
 
 int Memory::createRegion(void* buf, unsigned long long size, unsigned long long addr, int flags/* = 0*/)
 {
-    printf("Adding memory region %i, phys=%016llx, size=%016llx\n", this->current_slot, addr, size);
+    log("Adding memory region %i, phys=%016llx, size=%016llx\n", this->current_slot, addr, size);
     kvm_userspace_memory_region *region = new kvm_userspace_memory_region();
 	region->slot = this->current_slot;
     region->flags = flags;
 	region->guest_phys_addr = addr;
 	region->memory_size = size;
 	region->userspace_addr = (unsigned long long)buf;
+    this->slots.push_back(region);
     ioctl(this->vm_fd, KVM_SET_USER_MEMORY_REGION, region);
     this->current_slot++;
 
@@ -67,10 +69,38 @@ bool Memory::isMemoryDirty(int slot, uint32_t size)
     }
     else 
     {
-        printf("*** Error checking dirty log %i \n", slot);
+        //log("*** Error checking dirty log %i \n", slot);
         ret = true;
     }
     free(log.dirty_bitmap);
 
     return ret;
+}
+
+void* Memory::getPointer(uint64_t addr)
+{
+    for (kvm_userspace_memory_region* r : this->slots)
+    {
+        uint64_t start = r->guest_phys_addr;
+        uint64_t end = start + r->memory_size -1;
+
+        if (addr >= start && addr <= end)
+        {
+            return (void*)(r->userspace_addr + (addr- r->guest_phys_addr));
+        }
+    }
+}
+
+uint64_t Memory::getSize(uint64_t addr)
+{
+    for (kvm_userspace_memory_region* r : this->slots)
+    {
+        uint64_t start = r->guest_phys_addr;
+        uint64_t end = start + r->memory_size -1;
+
+        if (addr >= start && addr <= end)
+        {
+            return r->memory_size;
+        }
+    }
 }

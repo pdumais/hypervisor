@@ -11,6 +11,7 @@
 #include <string>
 #include <stdlib.h>
 #include <thread>
+#include "log.h"
 
 VirtualMachine::VirtualMachine(int kvm, unsigned long memsize, int cpu_count)
 {
@@ -44,11 +45,24 @@ VirtualMachine::VirtualMachine(int kvm, unsigned long memsize, int cpu_count)
     this->bus = new DeviceBus(this->mem);
 }
 
+void VirtualMachine::stop_vm()
+{
+    this->stop = true;
+    for (int i = 0; i < this->cpu_count; i++)
+    {
+        //TODO: how do we tell the vcpus to shutdown? we need to 
+        //      force a vmexit on them.
+        //close(this->cpu_fd[i]);
+        //ioctl(this->cpu_fd[i], KVM_SET_CPUID2, cpuid);
+    }
+
+}
+
 void VirtualMachine::enableCap(uint32_t c, int fd)
 {   
     if (ioctl(fd, KVM_CAP_CHECK_EXTENSION_VM, c) == 0)
     {
-        printf("*** ERROR: Capability %i is unsupported\n",c);
+        log("*** ERROR: Capability %i is unsupported\n",c);
         return;
     }
 
@@ -58,7 +72,7 @@ void VirtualMachine::enableCap(uint32_t c, int fd)
     cap.flags = 0;
     if (ioctl(fd, KVM_ENABLE_CAP, &cap) != 0)
     {
-        printf("*** ERROR: Can't set capability %i\n", c);
+        log("*** ERROR: Can't set capability %i\n", c);
     }
 }
 
@@ -71,7 +85,7 @@ void VirtualMachine::initRAM(unsigned long memsize)
 
 VirtualMachine::~VirtualMachine()
 {
-    printf("destructor\n");
+    log("destructor\n");
     //TODO: destroy ram buffer
     delete this->bus;
     delete this->mem;
@@ -140,7 +154,7 @@ void VirtualMachine::configureIRQChip()
 {
     if (ioctl(this->vm_fd, KVM_CREATE_IRQCHIP, 0) == -1)
     {
-        printf("*** ERROR: Could not create IRQ Chip\n");
+        log("*** ERROR: Could not create IRQ Chip\n");
     }
 
     kvm_irqchip chip;
@@ -148,17 +162,17 @@ void VirtualMachine::configureIRQChip()
     chip.chip_id = 2; // IOAPIC
     if (ioctl(this->vm_fd, KVM_GET_IRQCHIP, &chip) == -1)
     {
-        printf("*** ERROR: Could not get IRQ Chip\n");
+        log("*** ERROR: Could not get IRQ Chip\n");
     }
 
     if (chip.chip.ioapic.base_address != 0xfec00000) 
     {
         //TODO: We hardcode the guest to use that location for the ioapic. 
         //      we should instead write the adress somewhere and get the guest to look for it
-        printf("*** ERROR: ioapic is not at expected base address\n");
+        log("*** ERROR: ioapic is not at expected base address\n");
     }
 
-    printf("IOAPIC base address = %016llx, id= %i\n",chip.chip.ioapic.base_address, chip.chip.ioapic.id);
+    log("IOAPIC base address = %016llx, id= %i\n",chip.chip.ioapic.base_address, chip.chip.ioapic.id);
 
     // Now we'll setup IRQs 1-24. We tell KVM that we want them to be routed on the ioapic
     int nr = 24;
@@ -177,7 +191,7 @@ void VirtualMachine::configureIRQChip()
     }
     if (ioctl(this->vm_fd, KVM_SET_GSI_ROUTING, r) < 0 )
     {
-        printf("*** ERROR: Can't set GSI routing\n");
+        log("*** ERROR: Can't set GSI routing\n");
         return;
     }
     free(r);
@@ -191,7 +205,7 @@ int VirtualMachine::registerFdForGSI(int gsi, int efd)
     irqfd.fd = efd; 
     if (ioctl(this->vm_fd, KVM_IRQFD, &irqfd) < 0 )
     {
-        printf("*** ERROR: Can't register eventfd\n");
+        log("*** ERROR: Can't register eventfd\n");
         return -1;
     }
 
@@ -200,20 +214,24 @@ int VirtualMachine::registerFdForGSI(int gsi, int efd)
 
 void VirtualMachine::run()
 {
-    std::thread th[this->cpu_count];
-    //this->cpu_count = 1;
     this->stop = false;
     for (int i = 0; i < this->cpu_count; i++)
     {
-        th[i] = std::thread([=]() {
+        std::thread *th = new std::thread([=]() {
             this->runCpu(i);
         });
+        this->cpu_threads.push_back(th);
     }
+}
 
-    for (int i = 0; i < this->cpu_count; i++)
+void VirtualMachine::join()
+{
+    for (auto& th : this->cpu_threads)
     {
-        th[i].join();
+        th->join();
+        delete th;
     }
+    this->cpu_threads = std::vector<std::thread*>();
 
 }
 void VirtualMachine::runCpu(int cpuIndex)
@@ -222,9 +240,9 @@ void VirtualMachine::runCpu(int cpuIndex)
     this->dumpRegisters(cpu);
 
     int mmap_size = ioctl(this->kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
-    printf("mmap_size = %i\n", mmap_size);
+    log("mmap_size = %i\n", mmap_size);
     struct kvm_run *run = (struct kvm_run *)mmap(0, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, cpu, 0);
-    printf("kvm_run = 0x%08x, errno=%i, cpu_fd=%i\n", run, errno, cpu);
+    log("kvm_run = 0x%08x, errno=%i, cpu_fd=%i\n", run, errno, cpu);
     unsigned char seq = 0;
 
     while (!this->stop)
@@ -239,18 +257,18 @@ void VirtualMachine::runCpu(int cpuIndex)
         switch (reason) {
             case KVM_EXIT_MMIO:
                 {
-                    printf("*** KVM_EXIT_MMIO %016llx %08x %i\n", run->mmio.phys_addr, run->mmio.len, run->mmio.is_write);
+                    log("*** KVM_EXIT_MMIO %016llx %08x %i\n", run->mmio.phys_addr, run->mmio.len, run->mmio.is_write);
                     this->dumpRegisters(cpu);
                 }
                 break;
             case KVM_EXIT_X86_WRMSR:
                 {
-                    printf("*** KVM_EXIT_X86_WRMSR %i %i %08x %016llx\n", run->msr.error, run->msr.reason, run->msr.index, run->msr.data);
+                    log("*** KVM_EXIT_X86_WRMSR %i %i %08x %016llx\n", run->msr.error, run->msr.reason, run->msr.index, run->msr.data);
                 }
                 break;
             case KVM_EXIT_SHUTDOWN:
                 {
-                    printf("*** KVM_EXIT_SHUTDOWN (Triple fault) %i %i %08x %016llx\n", run->msr.error, run->msr.reason, run->msr.index, run->msr.data);
+                    log("*** KVM_EXIT_SHUTDOWN (Triple fault) %i %i %08x %016llx\n", run->msr.error, run->msr.reason, run->msr.index, run->msr.data);
                     this->dumpRegisters(cpu);
                     this->stop = true;
                     continue;
@@ -260,7 +278,7 @@ void VirtualMachine::runCpu(int cpuIndex)
                 {
                     // This will never be executed. We've enabled IRQCHIP, so KVM will handle IRQs and also HLT
                     // since it needs to wakeup the VM on IRQs. So this gets done automatically too.
-                    printf("** KVM_EXIT_HLT\n");
+                    log("** KVM_EXIT_HLT\n");
                 }
                 break;
             case KVM_EXIT_IO:
@@ -283,7 +301,7 @@ void VirtualMachine::runCpu(int cpuIndex)
                             }
                             else
                             {
-                                printf("io in %04x = %04x\n", run->io.port, ((unsigned int*)data)[0]);
+                                log("io in %04x = %04x\n", run->io.port, ((unsigned int*)data)[0]);
                             }
                         }
 
@@ -304,7 +322,7 @@ void VirtualMachine::runCpu(int cpuIndex)
                             else
                             {
                                 this->dumpRegisters(cpu);
-                                printf("io out %04x = %04x\n", run->io.port, ((unsigned int*)data)[0]);
+                                log("io out %04x = %04x\n", run->io.port, ((unsigned int*)data)[0]);
                             }
                         }
                     }
@@ -312,25 +330,25 @@ void VirtualMachine::runCpu(int cpuIndex)
 	            break;
             case KVM_EXIT_UNKNOWN:
                 {
-                    printf("** VM EXIT Unknown reason\n");
+                    log("** VM EXIT Unknown reason\n");
                     this->dumpRegisters(cpu);
                 }
                 break;
             default:
                 {
-                    printf("** Unhandled VM EXIT %i\n", reason);
+                    log("** Unhandled VM EXIT %i\n", reason);
                     this->dumpRegisters(cpu);
                     this->stop = true;
                     continue;
                 }
 	    } 
     }
-    printf("CPU %i exited\n", cpu);
+    log("CPU %i exited\n", cpu);
 }
 
 void VirtualMachine::handleHypercall(unsigned int cmd, int cpu)
 {
-    printf("*** Hypercall(%i): cmd=%08x\n", cpu, cmd);
+    log("*** Hypercall(%i): cmd=%08x\n", cpu, cmd);
     sleep(1);
 }
 
@@ -340,10 +358,10 @@ void VirtualMachine::dumpRegisters(int cpu_fd)
     struct kvm_regs regs;
     ioctl(cpu_fd, KVM_GET_SREGS, &sregs);
     ioctl(cpu_fd, KVM_GET_REGS, &regs);
-    printf("  efer: %016llx lapic_base: %016llx\n",sregs.efer, sregs.apic_base);
-    printf("  cr0: %016llx cr2: %016llx cr3: %016llx cr4: %016llx cr8: %016llx\n",sregs.cr0,sregs.cr2,sregs.cr3,sregs.cr4,sregs.cr8);
-    printf("  rax: %016llx rbx: %016llx rcx: %016llx rdx: %016llx rdi: %016llx rsi: %016llx\n",regs.rax,regs.rbx,regs.rcx,regs.rdx,regs.rdi,regs.rsi);
-    printf("  rsp: %016llx rip: %016llx flags: %016llx\n",regs.rsp,regs.rip, regs.rflags);
+    log("  efer: %016llx lapic_base: %016llx\n",sregs.efer, sregs.apic_base);
+    log("  cr0: %016llx cr2: %016llx cr3: %016llx cr4: %016llx cr8: %016llx\n",sregs.cr0,sregs.cr2,sregs.cr3,sregs.cr4,sregs.cr8);
+    log("  rax: %016llx rbx: %016llx rcx: %016llx rdx: %016llx rdi: %016llx rsi: %016llx\n",regs.rax,regs.rbx,regs.rcx,regs.rdx,regs.rdi,regs.rsi);
+    log("  rsp: %016llx rip: %016llx flags: %016llx\n",regs.rsp,regs.rip, regs.rflags);
 }
 
 void VirtualMachine::addDevice(DeviceBase* dev)
@@ -351,3 +369,9 @@ void VirtualMachine::addDevice(DeviceBase* dev)
     device_enumeration_entry* e = this->bus->addDevice(dev);
     this->registerFdForGSI(e->irq, dev->getEventFd());
 }
+
+Memory* VirtualMachine::getMemory()
+{
+    return this->mem;
+}
+

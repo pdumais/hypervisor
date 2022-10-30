@@ -1,4 +1,5 @@
 #include "DeviceVideoCard.h"
+#include "log.h"
 
 #define VC_LINE_HEIGHT 16
 #define VC_CHAR_WIDTH 8
@@ -105,7 +106,7 @@ void DeviceVideoCard::setMode(bool text, int width, int height)
 void DeviceVideoCard::handlePortWrite(unsigned int data)
 {
     int cmd = (data >>28);
-    printf("VideoCard port write: %x\n", cmd);
+    log("VideoCard port write: %x\n", cmd);
     if (cmd == 0x0F) // set mode
     {
         int h = data & 0xFFF;

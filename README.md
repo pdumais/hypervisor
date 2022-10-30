@@ -56,6 +56,34 @@ The hypervisor creates 1 thread per vcpu and calls KVM_RUN (VMRESUME) in a loop.
 # Guest machine
 The guest code is very messy. That's because I didn't wanna bother rewriting another OS, I've those this already in the past (https://github.com/pdumais/OperatingSystem)
 
+## Running
+run as root
+`ip link show tap1` should show the device is up and part of a bridge
+
+## Hypercalls
+A "vmcall" in the guest is trapped by KVM. KVM checks the rax and handles the call. 
+For example, if rax==KVM_HC_SEND_IPI, then this is interpreted as sending a IPI to another CPU.
+The full list is here: https://www.infradead.org/~mchehab/kernel_docs/virt/kvm/hypercalls.html
+We cannot define custom hypercalls and trap them in our HV because KVM swallows them all.
+So to define the same behaviour, we can isntead reserve a port and trap VM_EXIT_IO. So for
+example, we can define a "out  %eax, $0xFFFF" as the hypercall and we trigger on port 0xFFFF 
+in the VM_EXIT_IO handler. We could also rely on VM_EXIT_MMIO with a reserved area in memory
+And example of implementing a hypercall with VM_EXIT_MMIO:
+
+    - Create a memory region with KVM_MEM_READONLY
+    - When guest will write in that region, a VM_EXIT_MMIO will be triggered
+    - Hypervisor detects that the physical address that was used by the guest is within that special region: This is a hypercall
+    - Hypervisor inspects what the guest wanted to write, interprets that as the "hypercall command"
+
+# Building and Running
+## Dependencies
+### libudus86 on ubuntu
+sudo apt install autoconf libtool python2 -y
+git clone https://github.com/vmt/udis86.git
+./configure --with-python=/usr/bin/python2
+make 
+make install
+
 
 # Final Thought
 I've written an OS in the past, as mentioned above. It was fun to learn about how PCI works, how to write virtio drivers, how to deal with the BIOS, writting a bootloader, etc. But I think it would've been nice if all of that had been simplified since this is not where I wanted to spend my limited time on. So I think that a "simple machine emulator" has its place in the world. 

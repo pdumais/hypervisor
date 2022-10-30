@@ -7,6 +7,7 @@
 .global registerInterruptGate
 .global registerIRQ
 .global startAllCPUs
+.global load_idt
 
 #define APIC_BASE_MSR                       0x1B
 #define APIC_REG_ID                         0x0020
@@ -345,14 +346,14 @@ setup_idt:
     add     $8,%rax
     loop    1b
 
-    call    loadIDT
+    call    load_idt
     pop     %rdi
     pop     %rcx
     pop     %rbx
     pop     %rax
     ret
 
-loadIDT:
+load_idt:
     push    %rax
     mov     $IDTRegister,%rax
     lidt   (%rax)

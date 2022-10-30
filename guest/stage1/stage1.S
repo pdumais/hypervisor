@@ -15,7 +15,9 @@ _start:
     .BYTE 0xEA                                                                           
     .WORD 8
     .WORD 0x0 /* this will jump and will set CS to 0x0 */ 
-
+    nop
+    nop
+    nop
 .org 8
     cli
 

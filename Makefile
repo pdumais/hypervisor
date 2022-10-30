@@ -1,8 +1,8 @@
 SRCS := $(wildcard *.cpp)
 OBJS := $(patsubst %.cpp,%.o,$(SRCS))
-CC := g++
+CC := g++ -std=c++17
 CFLAGS := -g 
-LDFLAGS := -lvncserver
+LDFLAGS := -lvncserver -lncurses -ludis86 -L/usr/local/lib
 
 all: vm main
 

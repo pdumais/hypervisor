@@ -1,5 +1,6 @@
 #include "DeviceBus.h"
 #include <string.h>
+#include "log.h"
 
 DeviceBus::DeviceBus(Memory* mem) 
 {
@@ -60,7 +61,7 @@ device_enumeration_entry* DeviceBus::addDevice(DeviceBase* dev)
             e->id = dev->getId();
             dev->register_memory(this->mem, e->membase);
             strcpy(e->name, dev->getName().c_str());
-            printf("Adding device %s, io=%04x, mem=%016lx\n", e->name, e->io_base, e->membase);
+            log("Adding device %s, io=%04x, mem=%016lx\n", e->name, e->io_base, e->membase);
             return e;
         }
     }

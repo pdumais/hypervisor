@@ -1,4 +1,5 @@
 #include "VNCServer.h"
+#include "log.h"
 
 
 static void dokey(rfbBool down,rfbKeySym k,rfbClientPtr cl)
@@ -9,7 +10,7 @@ static void dokey(rfbBool down,rfbKeySym k,rfbClientPtr cl)
 
 VNCServer::VNCServer() 
 {
-    printf("VNC server init\n");
+    log("VNC server init\n");
     this->server = rfbGetScreen(0,0,800,600, 8,3,4);
     this->videoCard = new DeviceVideoCard(this->server);
     this->server->port = 5912;

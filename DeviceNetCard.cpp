@@ -13,6 +13,8 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
+#include "log.h"
+
 
 /**
  * Very simple and naive virtual netcard. 
@@ -51,14 +53,14 @@ DeviceNetCard::DeviceNetCard(std::string name) : DeviceBase(1, "Network Adapter"
     }
     else
     {
-        printf("Creating tap interface\n");
+        log("Creating tap interface\n");
         memset(&ifr, 0, sizeof(ifr));
         ifr.ifr_flags = IFF_TAP; 
         strncpy(ifr.ifr_name, name.c_str(), IFNAMSIZ);
         int err = ioctl(tapfd,TUNSETIFF,(void*)&ifr);
         if(err < 0)
         {
-            printf("ioctl error\n");
+            log("ioctl error\n");
             close(this->tapfd);
             this->tapfd = 0;
             return;
@@ -75,11 +77,11 @@ DeviceNetCard::DeviceNetCard(std::string name) : DeviceBase(1, "Network Adapter"
     if (err == 0)
     {
         for (int i = 0; i < 6; ++i) mac[i] = ifr.ifr_addr.sa_data[i];
-        printf("Netcard %s has MAC %02x:%02x:%02x:%02x:%02x:%02x\n",name.c_str(), mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+        log("Netcard %s has MAC %02x:%02x:%02x:%02x:%02x:%02x\n",name.c_str(), mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
     }
     else
     {
-        printf("*** ERROR: SIOCGIFHWADDR return %i\n",err);
+        log("*** ERROR: SIOCGIFHWADDR return %i\n",err);
         for (int i = 0; i < 6; ++i) mac[i] = 0;
     }
     close(sock);

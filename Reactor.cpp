@@ -2,6 +2,8 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <cstdio>
+#include "log.h"
+
 
 #define EPOLL_WAIT_MS 20
 
@@ -44,7 +46,7 @@ void Reactor::start()
 
                 if (!this->workerFdMap.count(fd))
                 {
-                    printf("Invalid fd for event\n");
+                    log("Invalid fd for event\n");
                     continue;
                 }
 
@@ -56,7 +58,7 @@ void Reactor::start()
                 w->work();
             }
         }
-        printf("worker thread exiting\n");
+        log("worker thread exiting\n");
     });
 }
 

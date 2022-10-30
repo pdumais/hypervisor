@@ -1,0 +1,16 @@
+Embeded debugger
+    move cursor line by line and highlight current line
+    add breakpoints
+        using spacebar. Add breakpoint at address for all vcpu
+    manual break/pause
+    break on start (to allow setting breakpoints)
+    enhancement
+        we are currently just getting memory from slot 0. 
+            so we can't see the mem for the DeviceBus memory area
+
+
+printf should output to video console
+
+vfio? KVM_CREATE_DEVICE with KVM_DEV_TYPE_VFIO ?
+    ->https://www.kernel.org/doc/html/v5.17/virt/kvm/devices/vfio.html
+
