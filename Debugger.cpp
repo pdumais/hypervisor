@@ -37,10 +37,17 @@ Debugger::~Debugger()
 {
 }
 
-void Debugger::dumpMem()
+void Debugger::refreshView()
 {
     clear();
+    this->dumpMem();
+    this->dumpCpuState(this->current_cpu_view);
+    move(0,0);
+    refresh();
+}
 
+void Debugger::dumpMem()
+{
     MemoryView* m = this->views[this->mode];
     auto list = m->getLines(this->base_line_pointer, NLINES);
     int line = 0;
@@ -56,10 +63,6 @@ void Debugger::dumpMem()
         attroff(A_STANDOUT);
         line++;
     }
-
-    this->dumpCpuState(this->current_cpu_view);
-    move(0,0);
-    refresh();
 }
 
 void Debugger::dumpCpuState(int cpu)
@@ -112,7 +115,7 @@ void Debugger::start()
     this->win = newwin(25, 80, 0, 0);
 
     int ch = 0;
-    this->dumpMem();
+    this->refreshView();
     while (ch != 27 && ch != 'q')
     {
         ch = getch();
@@ -130,7 +133,7 @@ void Debugger::start()
             case '9':
             {
                 this->current_cpu_view = ch-48;
-                this->dumpMem();
+                this->refreshView();
             }
             break;
             case KEY_UP:
@@ -140,13 +143,13 @@ void Debugger::start()
                     if (this->base_line_pointer > 0)
                     {
                         this->base_line_pointer--;
-                        this->dumpMem();
+                        this->refreshView();
                     }
                 }
                 else
                 {
                     cursor--;
-                    this->dumpMem();
+                    this->refreshView();
                 }
             }
             break;
@@ -155,12 +158,12 @@ void Debugger::start()
                 if (cursor == NLINES-1)
                 {
                     this->base_line_pointer++;
-                    this->dumpMem();
+                    this->refreshView();
                 }
                 else
                 {
                     cursor++;
-                    this->dumpMem();
+                    this->refreshView();
                 }
             }
             break;
@@ -169,14 +172,14 @@ void Debugger::start()
                 if (this->base_line_pointer >= (NLINES))
                 {
                     this->base_line_pointer -= (NLINES);
-                    this->dumpMem();
+                    this->refreshView();
                 }
             }
             break;
             case KEY_NPAGE:
             {
                 this->base_line_pointer += (NLINES);
-                this->dumpMem();
+                this->refreshView();
             }
             break;
             case 'b':
@@ -184,13 +187,13 @@ void Debugger::start()
                 this->bit_mode += this->bit_mode;
                 if (this->bit_mode > 64) this->bit_mode = 16;
                 for (MemoryView* m : this->views) m->setBitMode(this->bit_mode);
-                this->dumpMem();
+                this->refreshView();
             }
             break;
             case 'm':
             {
                 if (this->mode == MODE_HEX) this->mode = MODE_ASM; else this->mode = MODE_HEX;
-                this->dumpMem();
+                this->refreshView();
             }
             break;
             case 'p':
@@ -200,14 +203,14 @@ void Debugger::start()
                 if (s.valid)
                 {
                     this->modeToNewBaseAddress(s.phys_rip);
-                    this->dumpMem();
+                    this->refreshView();
                 }
             }   
             break;
             case 'c':
             {
                 this->vm->resume();
-                this->dumpMem();
+                this->refreshView();
             }   
             break;         
             case 'g':
@@ -222,7 +225,7 @@ void Debugger::start()
                 std::string s(str);
                 a = std::stoi(s, 0, 16);
                 this->modeToNewBaseAddress(a);
-                this->dumpMem();
+                this->refreshView();
             }
             break; 
         }

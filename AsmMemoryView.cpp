@@ -25,9 +25,16 @@ std::vector<MemLine> AsmMemoryView::getLines(int start, int count)
 
         instruction inst;
         inst.size = ud_insn_len(&current_ud_obj);
+        const uint8_t* bytes = ud_insn_ptr(&current_ud_obj);
 
+        std::stringstream ssBytes;
+        for (int i = 0; i < inst.size; i++)
+        {
+            int d = bytes[i];
+            ssBytes << std::setfill('0') << std::setw(2) << std::hex << d << " ";
+        }
         std::stringstream ss;
-        ss << std::left << std::setw(22) << ud_insn_hex(&current_ud_obj);
+        ss << std::left << std::setw(22) << ssBytes.str();
         ss << ud_insn_asm(&current_ud_obj);
         inst.str = ss.str();
         inst.addr = ud_insn_off(&current_ud_obj) + this->base_address;

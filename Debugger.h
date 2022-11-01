@@ -18,6 +18,7 @@ private:
     std::vector<MemoryView*> views;
     int current_cpu_view;
 
+    void refreshView();
     void dumpMem();
     void dumpCpuState(int cpu);
     void modeToNewBaseAddress(uint64_t addr);
