@@ -10,6 +10,7 @@ DeviceBus::DeviceBus(Memory* mem)
     for (int i=0; i<MAX_DEVICES; i++) this->devices[i] = 0;
 
     // Device enumeration area
+    // TODO: This region could overlap RAM. Make sure we handle this
     this->dev_enum_mem = (device_enumeration_entry*)mem->createRegion(this->enumeration_size, DEVICE_ENUMERATION_BASE_ADDRESS);
 
 }

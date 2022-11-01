@@ -52,8 +52,17 @@ int main(int argc, char** argv)
     log("Running\n");
     vm->run();
 
-    Debugger dbg(vm->getMemory());
+
+    Debugger dbg(vm, vm->getMemory());
     dbg.start();
+
+    /*while (1)
+    {
+        sleep(1);
+        vm->pause();
+        sleep(1);
+        vm->resume();
+    }*/
 
     vm->stop_vm();
     log("Terminating\n");

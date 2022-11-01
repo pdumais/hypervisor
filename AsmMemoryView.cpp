@@ -49,6 +49,10 @@ std::vector<MemLine> AsmMemoryView::getLines(int start, int count)
 
 void AsmMemoryView::setBaseAddress(uint64_t addr)
 {
+    // TODO: it would be nice to be able to view 
+    // instructions before the base address. But the disassembler does not
+    // allow us to do that. Because it can't know the size of the instruction
+    // that precedes it.
     this->base_address = addr;
     this->reset();
     this->update();
@@ -56,13 +60,11 @@ void AsmMemoryView::setBaseAddress(uint64_t addr)
 
 void AsmMemoryView::reset()
 {
-    //TODO: get the right memory region instead
     this->instructions = std::vector<instruction>();
     ud_init(&current_ud_obj);      
     ud_set_mode(&current_ud_obj, this->bit_mode);      
-    ud_set_input_buffer(&current_ud_obj, (uint8_t*)this->mem->getPointer(0), this->mem->getSize(0)); //TODO Set appropriate size
+    ud_set_input_buffer(&current_ud_obj, (uint8_t*)this->mem->getPointer(this->base_address), this->mem->getSize(this->base_address)); //TODO Set appropriate size
     ud_set_syntax(&current_ud_obj, UD_SYN_INTEL);
-    ud_input_skip(&current_ud_obj, this->base_address);
 }
 
 void AsmMemoryView::update()

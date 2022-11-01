@@ -1,7 +1,10 @@
 #include "VirtualMachine.h"
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <linux/kvm.h>
 #include <stdio.h>
+#include <csignal>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -12,6 +15,26 @@
 #include <stdlib.h>
 #include <thread>
 #include "log.h"
+
+//std::mutex threadVMsLock;
+//std::map<std::thread::id,VirtualMachine*> threadVMs;
+
+void sighandler(int r)
+{
+    /*
+    std::thread::id tid = std::this_thread::get_id();
+    threadVMsLock.lock();
+    if (!threadVMs.count(tid))
+    {
+        threadVMsLock.unlock();
+        return;
+    }
+    VirtualMachine* vm = threadVMs[tid];
+    threadVMsLock.unlock();
+    struct kvm_run *cpu = vm->getCpuInfo(tid);
+    cpu->immediate_exit = 1; //TODO: do we need to make this thread safe?*/
+    log("signal %i \n", r);
+}
 
 VirtualMachine::VirtualMachine(int kvm, unsigned long memsize, int cpu_count)
 {
@@ -48,14 +71,9 @@ VirtualMachine::VirtualMachine(int kvm, unsigned long memsize, int cpu_count)
 void VirtualMachine::stop_vm()
 {
     this->stop = true;
-    for (int i = 0; i < this->cpu_count; i++)
-    {
-        //TODO: how do we tell the vcpus to shutdown? we need to 
-        //      force a vmexit on them.
-        //close(this->cpu_fd[i]);
-        //ioctl(this->cpu_fd[i], KVM_SET_CPUID2, cpuid);
-    }
-
+    this->is_paused = false;
+    this->pauseCondition.notify_all();
+    this->signalVCPUs();
 }
 
 void VirtualMachine::enableCap(uint32_t c, int fd)
@@ -105,6 +123,7 @@ void VirtualMachine::initCPU()
     cpuid->nent = nent;
     ret = ioctl(this->kvm_fd, KVM_GET_SUPPORTED_CPUID, cpuid);
 
+
     for (int i = 0; i < this->cpu_count; i++)
     {
         this->cpu_fd[i] = ioctl(this->vm_fd, KVM_CREATE_VCPU, i);
@@ -133,6 +152,12 @@ void VirtualMachine::initCPU()
         ioctl(this->cpu_fd[i], KVM_SET_SREGS, &sregs);
     }
     free(cpuid);
+
+    /*this->debugInfo.arch.debugreg[0] = 0x1A;
+    this->debugInfo.arch.debugreg[7] = 0xF0;
+    this->debugInfo.control = KVM_GUESTDBG_USE_SW_BP;
+    ioctl(this->cpu_fd[0], KVM_SET_GUEST_DEBUG, &(this->debugInfo));*/
+
 }
 
 void VirtualMachine::loadBinary(const std::string& fname, unsigned long address)
@@ -215,6 +240,7 @@ int VirtualMachine::registerFdForGSI(int gsi, int efd)
 void VirtualMachine::run()
 {
     this->stop = false;
+    this->is_paused = false;
     for (int i = 0; i < this->cpu_count; i++)
     {
         std::thread *th = new std::thread([=]() {
@@ -222,6 +248,14 @@ void VirtualMachine::run()
         });
         this->cpu_threads.push_back(th);
     }
+}
+
+void VirtualMachine::signalVCPUs()
+{
+    for (std::thread* th : this->cpu_threads)
+    {
+        pthread_kill(th->native_handle(), SIGUSR1);
+    }    
 }
 
 void VirtualMachine::join()
@@ -234,25 +268,86 @@ void VirtualMachine::join()
     this->cpu_threads = std::vector<std::thread*>();
 
 }
+
+/*struct kvm_run* VirtualMachine::getCpuInfo(std::thread::id threadID)
+{
+    struct kvm_run* ret = 0;
+    this->cpuRegisterLock.lock();
+    if (this->cpuInfos.count(threadID)) 
+    {
+        ret =  this->cpuInfos[threadID];
+    }
+    this->cpuRegisterLock.unlock();
+    return ret;
+}
+
+void VirtualMachine::registerCpuInfo(struct kvm_run *run)
+{
+    std::thread::id tid = std::this_thread::get_id();
+    this->cpuRegisterLock.lock();
+    threadVMsLock.lock();
+    threadVMs[tid] = this;
+    threadVMsLock.unlock();
+    this->cpuInfos[tid] = run;
+    this->cpuRegisterLock.unlock();
+}*/
+
+
+void VirtualMachine::pause()
+{
+    this->is_paused = true;
+    this->signalVCPUs();
+}
+
+void VirtualMachine::resume()
+{
+    this->is_paused = false;
+    this->pauseCondition.notify_all();
+}
+
 void VirtualMachine::runCpu(int cpuIndex)
 {
+    std::signal(SIGUSR1, &sighandler);
+
     int cpu = this->cpu_fd[cpuIndex];
     this->dumpRegisters(cpu);
 
     int mmap_size = ioctl(this->kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
     log("mmap_size = %i\n", mmap_size);
     struct kvm_run *run = (struct kvm_run *)mmap(0, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, cpu, 0);
+    //this->registerCpuInfo(run);
     log("kvm_run = 0x%08x, errno=%i, cpu_fd=%i\n", run, errno, cpu);
     unsigned char seq = 0;
 
     while (!this->stop)
     {
+
+        if (this->is_paused)
+        {
+            log("pause\n");
+            auto lock = std::unique_lock<std::mutex>(this->pauseConditionMutex);
+            this->pauseCondition.wait(lock, [=](){ return !this->is_paused; });
+            log("pause ended\n");
+            continue;
+        }
+
         // The main loop runs the VM and blocks until a vmexit occurs. The IOCTL to KVM_RUN is basically the 'VMRESUME' instruction
         // After the call returns, we need to check for the vmexit reason and react. Then we can resume again.
         // Needless to say that each vmexit is expensive so we want to avoid it as much as possible. We don't really have
         // control over that since it's the guest that causes those exits, but it is the hypervisor that sets the condictions to exit
         // about mmio for example.
-        ioctl(cpu, KVM_RUN, 0);
+        int err = ioctl(cpu, KVM_RUN, 0);
+        if (err == -1)
+        {
+            if (errno == EINTR)
+            {
+                // This happens if we've kicked the CPU with signalVCPUs().
+                // The goal was to kick the CPU out of KVM_RUN so that we can evaluate conditions such as pause or stop
+                log("EINTR\n");
+            }
+            continue;
+        }
+
         int reason = run->exit_reason;
         switch (reason) {
             case KVM_EXIT_MMIO:
@@ -334,6 +429,12 @@ void VirtualMachine::runCpu(int cpuIndex)
                     this->dumpRegisters(cpu);
                 }
                 break;
+            /*case KVM_EXIT_DEBUG:
+                {
+                    printf("test\n");
+                    return;
+                }
+                break;*/
             default:
                 {
                     log("** Unhandled VM EXIT %i\n", reason);
@@ -344,6 +445,11 @@ void VirtualMachine::runCpu(int cpuIndex)
 	    } 
     }
     log("CPU %i exited\n", cpu);
+}
+
+bool VirtualMachine::isPaused()
+{
+    return this->is_paused;
 }
 
 void VirtualMachine::handleHypercall(unsigned int cmd, int cpu)
@@ -375,3 +481,28 @@ Memory* VirtualMachine::getMemory()
     return this->mem;
 }
 
+
+uint64_t VirtualMachine::translateAddress(int cpu, uint64_t addr)
+{
+    kvm_translation tr;
+    tr.linear_address = addr;
+    ioctl(this->cpu_fd[cpu], KVM_TRANSLATE, &tr);
+    return tr.physical_address;
+}
+
+VirtualMachine::state VirtualMachine::getState(int cpu)
+{
+    VirtualMachine::state s;
+
+    s.valid = false;
+    if (cpu >= MAX_CPU || this->cpu_fd[cpu] == 0) return s;
+
+    ioctl(this->cpu_fd[cpu], KVM_GET_REGS, &(s.regs));
+    s.phys_rdi = this->translateAddress(cpu, s.regs.rdi);
+    s.phys_rsi = this->translateAddress(cpu, s.regs.rsi);
+    s.phys_rip = this->translateAddress(cpu, s.regs.rip);
+    s.phys_rsp = this->translateAddress(cpu, s.regs.rsp);
+
+    s.valid = true;
+    return s;
+}
